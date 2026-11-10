@@ -1,0 +1,13 @@
+{
+  "id": "colour-zones",
+  "name": "Colour Zones",
+  "version": "1.0.0",
+  "description": "A port of darktable's color zones: lightness, chroma and hue curves over the pixel's lightness, chroma or hue, smooth or strong, with darktable's presets, pickers and edit by area.",
+  "author": "Anthony Reimche",
+  "main": "dist/index.js",
+  "license": "GPL-3.0-or-later",
+  "categories": ["Develop", "Color"],
+  "keywords": ["darktable", "color zones", "colour zones", "hue", "saturation", "lightness", "hsl", "curve", "lab"],
+  "repository": "anthonyreimche/Colour-Zones",
+  "minAppVersion": "3.2.0"
+}
