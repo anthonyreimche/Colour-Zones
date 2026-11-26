@@ -17,6 +17,7 @@ import * as React from "react";
 import { create } from "zustand";
 import type {
   ButtonProps,
+  CanvasTool,
   DevelopParams,
   FieldProps,
   FloatCaptureOptions,
@@ -49,7 +50,7 @@ type FakeMembers = Pick<
 > & {
   components: Pick<SafelightAPI["components"], "Slider" | "PickerIcon">;
   cursors: Pick<SafelightAPI["cursors"], "resolve">;
-  develop: Pick<SafelightAPI["develop"], "useParamScope" | "useDevelopOverlay" | "renderPhotoFloatFrame">;
+  develop: Pick<SafelightAPI["develop"], "useParamScope" | "useDevelopOverlay" | "renderPhotoFloatFrame" | "setCanvasTool" | "useCanvasToolHeld" | "framePoint">;
   ui: Pick<SafelightAPI["ui"], "Button" | "Field" | "Row" | "SegmentedControl" | "Select" | "Stack" | "Toggle" | "tokens">;
   stores: Pick<SafelightAPI["stores"], "create" | "useDevelopStore">;
 };
@@ -81,6 +82,10 @@ export interface Rig {
   /** What renderPhotoFloatFrame answers, and what it was asked. */
   setFloatFrame(frame: FloatFrame | null): void;
   floatRenders: FloatRender[];
+  /** The canvas tool the extension holds, or null. */
+  canvasTool(): CanvasTool | null;
+  /** Another extension takes the canvas: the held tool is let go. */
+  releaseCanvasTool(): void;
   /** Marks a settled render, as the host's histogram update does. */
   settle(): void;
 }
@@ -95,6 +100,7 @@ export function fakeApi(initial: Record<string, unknown> = {}): Rig {
   const sliderProps = new Map<number, SliderProps>();
   const unregistered: string[] = [];
   const floatRenders: FloatRender[] = [];
+  const canvas = create<{ held: CanvasTool | null }>()(() => ({ held: null }));
   let floatFrame: FloatFrame | null = null;
   let maskId: string | null = null;
   let imageRect: { x: number; y: number; w: number; h: number } | null = null;
@@ -165,6 +171,12 @@ export function fakeApi(initial: Record<string, unknown> = {}): Rig {
     develop: {
       useParamScope,
       useDevelopOverlay: () => ({ rect: imageRect, nonce: 0 }) as ReturnType<SafelightAPI["develop"]["useDevelopOverlay"]>,
+      useCanvasToolHeld: () => canvas((s) => s.held !== null),
+      setCanvasTool: (tool) => canvas.setState({ held: tool }),
+      framePoint: (el, clientX, clientY) => {
+        const box = el.getBoundingClientRect();
+        return { x: clientX - box.left, y: clientY - box.top };
+      },
       renderPhotoFloatFrame: async (photoId, _params, options) => {
         floatRenders.push({ photoId, options });
         return floatFrame;
@@ -187,6 +199,8 @@ export function fakeApi(initial: Record<string, unknown> = {}): Rig {
     setImageRect: (rect) => void (imageRect = rect),
     setFloatFrame: (frame) => void (floatFrame = frame),
     floatRenders,
+    canvasTool: () => canvas.getState().held,
+    releaseCanvasTool: () => canvas.setState({ held: null }),
     settle: () => photo.setState({ histogram: {} }),
     sliders: (root) =>
       [...root.querySelectorAll("[data-slider]")].map((el) => {

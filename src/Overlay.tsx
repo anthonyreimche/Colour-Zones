@@ -1,44 +1,28 @@
-// The develop-canvas overlay for color zones' two pickers, armed from the
-// panel. A click reads a small patch, a drag reads the box it draws. "Show"
+// The two on-image pickers, armed from the panel, held as the develop canvas's
+// tool. A click reads a small patch, a drag reads the box it draws. "Show"
 // marks the picked colour on the graph and bases the graph's colours on it;
 // "create" also rebuilds the edited curve around it (color_picker_apply):
 // flat, raised with Alt or lowered with Shift. darktable raises with Ctrl,
-// which Safelight keeps for panning and zooming: Ctrl / ⌘ / Space make the
-// overlay click-through. Both stay on, as darktable's toggles do, until the
-// button is pressed again or Esc.
+// which Safelight keeps for panning and zooming: the tool is zoomable, so
+// core hands Ctrl / Cmd / Space to the canvas. Both stay on, as darktable's
+// toggles do, until the button is pressed again or Esc.
 
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { curveFromPick, type PickedShape } from "./curve-edit";
 import { pickedSpan } from "./graph-model";
 import { DEFAULT_PARAMS, withCurve } from "./model";
 import { bagPatch, readParams } from "./params";
 import { pickArea, startLiveSampler } from "./picker";
 import { React, api } from "./rt";
+import type { CanvasTool, OverlayRect2 } from "./safelight";
 import { store, type UvBox } from "./store";
 
-export interface ClientBox {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-/** Client point → image UV through the displayed image rect, clamped to the
- *  image. `clientWidth / box.width` is the interface scale (the body zoom), so
- *  a zoomed UI still lands on the pixel under the pointer. Null when the
- *  point starts outside the image. */
-export function pointToUv(clientX: number, clientY: number, box: ClientBox, clientWidth: number, rect: Rect | null, clamp = false): { x: number; y: number } | null {
-  if (!rect || box.width <= 0 || box.height <= 0 || rect.w <= 0 || rect.h <= 0) return null;
-  const scale = clientWidth / box.width;
-  const x = ((clientX - box.left) * scale - rect.x) / rect.w;
-  const y = ((clientY - box.top) * scale - rect.y) / rect.h;
+/** A frame point → image UV through the displayed image rect, clamped to the
+ *  image when asked. Null when the point starts outside the image. */
+export function pointToUv(point: { x: number; y: number }, rect: OverlayRect2 | null, clamp = false): { x: number; y: number } | null {
+  if (!rect || rect.w <= 0 || rect.h <= 0) return null;
+  const x = (point.x - rect.x) / rect.w;
+  const y = (point.y - rect.y) / rect.h;
   if (clamp) return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   if (x < 0 || x > 1 || y < 0 || y > 1) return null;
   return { x, y };
@@ -72,15 +56,13 @@ export function applyPick(box: UvBox, shape: PickedShape): void {
   void dev.commitEdit("Colour Zones create curve");
 }
 
-export function ZonesOverlay() {
+export function ZonesTool({ rect }: { rect: OverlayRect2 }) {
   const { useEffect, useRef, useState } = React;
   const picker = store()((s) => s.picker);
   const area = store()((s) => s.area);
-  const overlay = api.develop.useDevelopOverlay();
   const ref = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
   const [drag, setDrag] = useState<UvBox | null>(null);
-  const [passthrough, setPassthrough] = useState(false);
 
   // The sampler runs only while a picker is on. A fresh sample applies a
   // pick that waited for it, and keeps the shown colour current; the create
@@ -106,43 +88,9 @@ export function ZonesOverlay() {
     };
   }, [picker]);
 
-  useEffect(() => {
-    if (picker === null) return;
-    const held = new Set<string>();
-    const update = () => setPassthrough(held.has("Control") || held.has("Meta") || held.has(" "));
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        store().getState().setPicker(null);
-        return;
-      }
-      held.add(e.key);
-      update();
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      held.delete(e.key);
-      update();
-    };
-    const onBlur = () => {
-      held.clear();
-      update();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", onBlur);
-      setPassthrough(false);
-    };
-  }, [picker]);
-
-  if (picker === null) return null;
-
   const uvAt = (e: { clientX: number; clientY: number }, clamp: boolean) => {
     const el = ref.current;
-    if (!el) return null;
-    return pointToUv(e.clientX, e.clientY, el.getBoundingClientRect(), el.clientWidth, overlay.rect, clamp);
+    return el ? pointToUv(api.develop.framePoint(el, e.clientX, e.clientY), rect, clamp) : null;
   };
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -179,38 +127,29 @@ export function ZonesOverlay() {
     setDrag(null);
   };
 
-  const style: CSSProperties = {
-    position: "absolute",
-    inset: 0,
-    pointerEvents: passthrough ? "none" : "auto",
-    cursor: api.cursors.resolve("pick"),
-  };
-
   const shown = drag ?? area;
-  const rect = overlay.rect;
-  const box =
-    shown && rect ? (
-      <div
-        style={{
-          position: "absolute",
-          left: rect.x + Math.min(shown.x0, shown.x1) * rect.w,
-          top: rect.y + Math.min(shown.y0, shown.y1) * rect.h,
-          width: Math.abs(shown.x1 - shown.x0) * rect.w,
-          height: Math.abs(shown.y1 - shown.y0) * rect.h,
-          minWidth: 6,
-          minHeight: 6,
-          transform: shown.x0 === shown.x1 && shown.y0 === shown.y1 ? "translate(-3px, -3px)" : undefined,
-          border: "1px solid rgba(255, 255, 255, 0.9)",
-          boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.6)",
-          pointerEvents: "none",
-        }}
-      />
-    ) : null;
+  const box = shown ? (
+    <div
+      style={{
+        position: "absolute",
+        left: rect.x + Math.min(shown.x0, shown.x1) * rect.w,
+        top: rect.y + Math.min(shown.y0, shown.y1) * rect.h,
+        width: Math.abs(shown.x1 - shown.x0) * rect.w,
+        height: Math.abs(shown.y1 - shown.y0) * rect.h,
+        minWidth: 6,
+        minHeight: 6,
+        transform: shown.x0 === shown.x1 && shown.y0 === shown.y1 ? "translate(-3px, -3px)" : undefined,
+        border: "1px solid rgba(255, 255, 255, 0.9)",
+        boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.6)",
+        pointerEvents: "none",
+      }}
+    />
+  ) : null;
 
   return (
     <div
       ref={ref}
-      style={style}
+      style={{ position: "absolute", inset: 0, cursor: api.cursors.resolve("pick") }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -219,4 +158,29 @@ export function ZonesOverlay() {
       {box}
     </div>
   );
+}
+
+const ZONES_TOOL: CanvasTool = {
+  overlay: ZonesTool,
+  zoomable: true,
+  onEscape: () => store().getState().setPicker(null),
+};
+
+/** Holds the canvas with the pickers' tool while one is on, and lets it go
+ *  when the last ends. Returns the unsubscribe. */
+export function holdPickerTool(): () => void {
+  return store().subscribe((state, prev) => {
+    if ((state.picker === null) !== (prev.picker === null)) api.develop.setCanvasTool(state.picker === null ? null : ZONES_TOOL);
+  });
+}
+
+/** Ends the picker once core has let the canvas go: another extension's
+ *  tool, or leaving Develop. */
+export function ZonesPickerWatch(): null {
+  const picker = store()((s) => s.picker);
+  const held = api.develop.useCanvasToolHeld();
+  React.useEffect(() => {
+    if (picker !== null && !held) store().getState().setPicker(null);
+  }, [picker, held]);
+  return null;
 }

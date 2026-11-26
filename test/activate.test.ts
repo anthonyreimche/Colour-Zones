@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import manifest from "../safelight.json";
 import { OVERLAY_ID, PANEL_ID, activate, deactivate } from "../src/index";
-import { ZonesOverlay } from "../src/Overlay";
+import { ZonesPickerWatch } from "../src/Overlay";
 import { ColourZonesPanel } from "../src/Panel";
 import { EXT_ID, PARAM_KEYS, STAGE_ID, qualified } from "../src/params";
 import { fakeApi } from "./support/fake-api";
@@ -30,10 +30,10 @@ describe("activate", () => {
     });
   });
 
-  it("registers the picker's overlay on the develop canvas", () => {
+  it("registers the watch that ends the picker when the canvas is taken", () => {
     const rig = fakeApi();
     activate(rig.api);
-    expect(rig.slots).toEqual([expect.objectContaining({ id: OVERLAY_ID, slot: "develop-canvas-overlay", component: ZonesOverlay })]);
+    expect(rig.slots).toEqual([expect.objectContaining({ id: OVERLAY_ID, slot: "develop-canvas-overlay", component: ZonesPickerWatch })]);
   });
 
   it("names its contributions under the manifest's id", () => {

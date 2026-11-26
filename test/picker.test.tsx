@@ -9,7 +9,7 @@ import { curveFromPick } from "../src/curve-edit";
 import { pickedSpan } from "../src/graph-model";
 import { activate } from "../src/index";
 import { CHANNELS, DEFAULT_PARAMS, labFromLinearSrgb, lchHue, resetParams, type Vec3 } from "../src/model";
-import { ZonesOverlay, pointToUv, shapeOf } from "../src/Overlay";
+import { pointToUv, shapeOf } from "../src/Overlay";
 import { bagPatch, qualified, readParams } from "../src/params";
 import { pickArea, startSampler } from "../src/picker";
 import { React } from "../src/rt";
@@ -96,17 +96,19 @@ describe("startSampler", () => {
 });
 
 describe("pointToUv", () => {
-  const box = { left: 10, top: 20, width: 200, height: 100 };
   const rect = { x: 50, y: 10, w: 100, h: 80 };
 
-  it("maps a client point through the image rect, scaled by the interface zoom", () => {
-    expect(pointToUv(110, 60, box, 200, rect)).toEqual({ x: 0.5, y: 0.375 });
-    expect(pointToUv(60, 40, box, 400, rect)).toEqual({ x: 0.5, y: 0.375 });
+  it("maps a frame point through the image rect", () => {
+    expect(pointToUv({ x: 100, y: 40 }, rect)).toEqual({ x: 0.5, y: 0.375 });
   });
 
   it("is null outside the image unless clamped", () => {
-    expect(pointToUv(15, 60, box, 200, rect)).toBeNull();
-    expect(pointToUv(15, 60, box, 200, rect, true)).toEqual({ x: 0, y: 0.375 });
+    expect(pointToUv({ x: 5, y: 40 }, rect)).toBeNull();
+    expect(pointToUv({ x: 5, y: 40 }, rect, true)).toEqual({ x: 0, y: 0.375 });
+  });
+
+  it("is null without a rect", () => {
+    expect(pointToUv({ x: 5, y: 40 }, null)).toBeNull();
   });
 });
 
@@ -118,19 +120,23 @@ describe("shapeOf", () => {
   });
 });
 
-describe("ZonesOverlay", () => {
+describe("the picker's canvas tool", () => {
+  const RECT = { x: 0, y: 0, w: 200, h: 100 };
+
   function overlaySetup(mode: "show" | "create") {
     const rig = fakeApi(bagPatch(resetParams(CHANNELS.hue)));
     activate(rig.api);
-    rig.setImageRect({ x: 0, y: 0, w: 200, h: 100 });
+    rig.setImageRect(RECT);
     const sample = halves(RED, BLUE);
     rig.setFloatFrame({ ...sample, space: { encoding: "linear", primaries: "rec709" }, point: "pre-output" });
     store().getState().setChannel(CHANNELS.chroma);
     act(() => store().getState().setPicker(mode));
-    const view = render(<ZonesOverlay />);
+    const tool = rig.canvasTool();
+    if (!tool) throw new Error("no canvas tool held");
+    const Tool = tool.overlay;
+    const view = render(<Tool rect={RECT} />);
     const layer = view.container.firstElementChild as HTMLDivElement;
     layer.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
-    Object.defineProperty(layer, "clientWidth", { value: 200 });
     const drag = async (shift = false, alt = false) => {
       await act(async () => {
         await new Promise((r) => setTimeout(r, 200));
@@ -141,14 +147,26 @@ describe("ZonesOverlay", () => {
         fireEvent.pointerUp(layer, { clientX: 190, clientY: 90, pointerId: 1, shiftKey: shift, altKey: alt });
       });
     };
-    return { rig, view, layer, drag };
+    return { rig, tool, view, layer, drag };
   }
 
-  it("draws nothing while no picker is on", () => {
+  it("is held while a picker is on and let go when it ends", () => {
     const rig = fakeApi();
     activate(rig.api);
-    const view = render(<ZonesOverlay />);
-    expect(view.container.firstElementChild).toBeNull();
+    expect(rig.canvasTool()).toBeNull();
+    act(() => store().getState().setPicker("show"));
+    expect(rig.canvasTool()).not.toBeNull();
+    act(() => store().getState().setPicker(null));
+    expect(rig.canvasTool()).toBeNull();
+  });
+
+  it("leaves the pan and zoom keys to core: it is zoomable and listens to no key", () => {
+    const { tool } = overlaySetup("show");
+    expect(tool.zoomable).toBe(true);
+    const add = vi.spyOn(window, "addEventListener");
+    cleanup();
+    expect(add.mock.calls.filter(([type]) => type === "keydown" || type === "keyup")).toEqual([]);
+    add.mockRestore();
   });
 
   it("renders the photo with the stage switched off for the picker to read", async () => {
@@ -191,11 +209,17 @@ describe("ZonesOverlay", () => {
     expect(rig.commits).toEqual([]);
   });
 
-  it("ends the picker on Esc", () => {
-    overlaySetup("show");
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    });
+  it("ends the picker on core's Escape", () => {
+    const { tool } = overlaySetup("show");
+    act(() => tool.onEscape?.());
+    expect(store().getState().picker).toBeNull();
+  });
+
+  it("ends the picker when another extension takes the canvas", () => {
+    const { rig } = overlaySetup("show");
+    const Watch = rig.slots[0].component;
+    render(<Watch />);
+    act(() => rig.releaseCanvasTool());
     expect(store().getState().picker).toBeNull();
   });
 });

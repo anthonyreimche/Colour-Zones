@@ -1,7 +1,7 @@
 {
   "name": "safelight-colour-zones",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Colour Zones extension for Safelight: a port of darktable's color zones, lightness, chroma and hue curves over lightness, chroma or hue.",
   "type": "module",
   "scripts": {
